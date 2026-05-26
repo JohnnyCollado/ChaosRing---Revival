@@ -1,0 +1,49 @@
+/target
+/vendor/boost
+/vendor/boost_*.tar.gz
+/vendor/boost_*.7z
+/vendor/boost_*.zip
+/touchHLE_sandbox
+/touchHLE_apps
+touchHLE_log.txt
+touchHLE_wallpaper.*
+
+# Diagnostic / scratch output from local dev runs
+
+build.log
+run.log
+*.log.bak
+DUMP.txt
+
+# Android
+
+*.iml
+.gradle
+/local.properties
+.idea/
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+android/app/src/main/jniLibs
+android/app/build
+android/build
+
+# Editors / IDEs
+
+.vscode/
+.vs/
+*.swp
+*.swo
+
+# OS noise
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Agentic-coding tool state
+
+.claude/
+.aider*
