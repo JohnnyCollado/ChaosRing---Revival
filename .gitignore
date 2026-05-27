@@ -37,6 +37,9 @@ DUMP.txt
 
 /songsummoner
 
+# Downloaded on demand for one-off history rewrites; not source.
+/dev-scripts/git-filter-repo
+
 # Android
 
 *.iml
