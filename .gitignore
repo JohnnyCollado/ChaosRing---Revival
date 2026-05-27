@@ -15,9 +15,27 @@ touchHLE_wallpaper.*
 # Diagnostic / scratch output from local dev runs
 
 build.log
+build-android.log
+build-android-hd.log
+build-windows.log
 run.log
 *.log.bak
 DUMP.txt
+
+# Build outputs and downloadable tooling — never source
+
+/dist
+/gradle
+/tools
+
+# Local reverse-engineering / unpacked-IPA scratch space
+
+/re_workspace
+
+# Standalone wrapper output for a different game (Song Summoner). The APK is
+# a build artifact, not source.
+
+/songsummoner
 
 # Android
 
