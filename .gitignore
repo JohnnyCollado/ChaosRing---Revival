@@ -8,6 +8,10 @@
 touchHLE_log.txt
 touchHLE_wallpaper.*
 
+# IPA bundles are large copyrighted assets; users supply their own copy
+# on their device or local disk rather than checking them into the repo.
+*.ipa
+
 # Diagnostic / scratch output from local dev runs
 
 build.log
@@ -47,3 +51,7 @@ Desktop.ini
 
 .claude/
 .aider*
+vendor/openal-soft/
+vendor/dynarmic/
+vendor/SDL/
+vendor/stb/

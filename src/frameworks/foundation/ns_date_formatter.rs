@@ -36,11 +36,44 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.borrow_mut::<NSDateFormatterHostObject>(this).date_format = Some(date_format);
 }
 
+- (())setLocale:(id)_locale { // NSLocale *
+    // touchHLE doesn't yet use the locale for date formatting (the format
+    // strings are interpreted with hardcoded English-like substitution
+    // rules). Accept the call so guests that configure their date
+    // formatter explicitly don't crash; the resulting strings will be in
+    // touchHLE's default formatting regardless.
+    log_dbg!("[(NSDateFormatter *){:?} setLocale:{:?}] (ignored)", this, _locale);
+}
+
+- (())setTimeZone:(id)_tz { // NSTimeZone *
+    log_dbg!("[(NSDateFormatter *){:?} setTimeZone:{:?}] (ignored)", this, _tz);
+}
+
+- (())setDateStyle:(crate::frameworks::foundation::NSUInteger)_style {
+    log_dbg!("[(NSDateFormatter *){:?} setDateStyle:{}] (ignored)", this, _style);
+}
+
+- (())setTimeStyle:(crate::frameworks::foundation::NSUInteger)_style {
+    log_dbg!("[(NSDateFormatter *){:?} setTimeStyle:{}] (ignored)", this, _style);
+}
+
 - (id)stringFromDate:(id)date {
     let &NSDateFormatterHostObject {
         date_format
     } = env.objc.borrow(this);
-    let mut format = ns_string::to_rust_string(env, date_format.unwrap()).to_string().clone();
+    // If the guest didn't call setDateFormat: (it's using locale defaults via
+    // setDateStyle:/setTimeStyle: instead, which we ignore), fall back to a
+    // sensible default rather than panicking. ISO-ish "yyyy-MM-dd HH:mm:ss"
+    // is good enough for most guests that only need *some* string.
+    let mut format = if let Some(df) = date_format {
+        ns_string::to_rust_string(env, df).to_string().clone()
+    } else {
+        log_dbg!(
+            "[(NSDateFormatter *){:?} stringFromDate:] no format set; using default",
+            this
+        );
+        "yyyy-MM-dd HH:mm:ss".to_string()
+    };
     log_dbg!("date_format before: {:?}", format);
 
     let ti: NSTimeInterval = msg![env; date timeIntervalSinceReferenceDate];

@@ -5,6 +5,9 @@
  */
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <typeinfo>
 
 #include "dynarmic/interface/A32/a32.h"
 #include "dynarmic/interface/A32/config.h"
@@ -50,6 +53,9 @@ private:
     bool error;
     auto value = touchHLE_cpu_read_u8(mem, vaddr, &error);
     if (error) {
+      std::fprintf(stderr,
+                   "[CPU] failed Read8  vaddr=0x%08x guest_pc=0x%08x\n",
+                   vaddr, cpu->Regs()[15]);
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
     return value;
@@ -58,6 +64,9 @@ private:
     bool error;
     auto value = touchHLE_cpu_read_u16(mem, vaddr, &error);
     if (error) {
+      std::fprintf(stderr,
+                   "[CPU] failed Read16 vaddr=0x%08x guest_pc=0x%08x\n",
+                   vaddr, cpu->Regs()[15]);
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
     return value;
@@ -66,6 +75,9 @@ private:
     bool error;
     auto value = touchHLE_cpu_read_u32(mem, vaddr, &error);
     if (error) {
+      std::fprintf(stderr,
+                   "[CPU] failed Read32 vaddr=0x%08x guest_pc=0x%08x\n",
+                   vaddr, cpu->Regs()[15]);
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
     return value;
@@ -74,6 +86,9 @@ private:
     bool error;
     auto value = touchHLE_cpu_read_u64(mem, vaddr, &error);
     if (error) {
+      std::fprintf(stderr,
+                   "[CPU] failed Read64 vaddr=0x%08x guest_pc=0x%08x\n",
+                   vaddr, cpu->Regs()[15]);
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
     return value;
@@ -91,21 +106,33 @@ private:
 
   void MemoryWrite8(VAddr vaddr, std::uint8_t value) override {
     if (touchHLE_cpu_write_u8(mem, vaddr, value)) {
+      std::fprintf(stderr,
+                   "[CPU] failed Write8  vaddr=0x%08x val=0x%02x guest_pc=0x%08x\n",
+                   vaddr, value, cpu->Regs()[15]);
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
   }
   void MemoryWrite16(VAddr vaddr, std::uint16_t value) override {
     if (touchHLE_cpu_write_u16(mem, vaddr, value)) {
+      std::fprintf(stderr,
+                   "[CPU] failed Write16 vaddr=0x%08x val=0x%04x guest_pc=0x%08x\n",
+                   vaddr, value, cpu->Regs()[15]);
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
   }
   void MemoryWrite32(VAddr vaddr, std::uint32_t value) override {
     if (touchHLE_cpu_write_u32(mem, vaddr, value)) {
+      std::fprintf(stderr,
+                   "[CPU] failed Write32 vaddr=0x%08x val=0x%08x guest_pc=0x%08x\n",
+                   vaddr, value, cpu->Regs()[15]);
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
   }
   void MemoryWrite64(VAddr vaddr, std::uint64_t value) override {
     if (touchHLE_cpu_write_u64(mem, vaddr, value)) {
+      std::fprintf(stderr,
+                   "[CPU] failed Write64 vaddr=0x%08x val=0x%016llx guest_pc=0x%08x\n",
+                   vaddr, (unsigned long long)value, cpu->Regs()[15]);
       cpu->HaltExecution(Dynarmic::HaltReason::MemoryAbort);
     }
   }
@@ -280,13 +307,41 @@ public:
   }
 
   std::int32_t run_or_step(touchHLE_Mem *mem, std::uint64_t *ticks) {
+    // CRITICAL: cpu->Run() / cpu->Step() and the callbacks they invoke can
+    // throw C++ exceptions (e.g. from dynarmic itself, mcl, or downstream
+    // libraries used by the host-side callbacks). Letting such an exception
+    // escape into the caller is undefined behaviour because the Rust caller
+    // is `extern "C"` (= noexcept on MSVC). On Windows specifically this
+    // manifests as an access violation in `_C_specific_handler_noexcept`
+    // when the unwinder runs on a corosensei coroutine stack.
+    //
+    // Catch everything here. If a real bug fires, dump enough info to
+    // diagnose it (typeid + what()) and abort. Aborting is no worse than
+    // the access violation we'd otherwise get, and we'll actually know
+    // what the exception was.
     env.mem = mem;
     Dynarmic::HaltReason hr;
-    if (ticks) {
-      env.ticks_remaining = *ticks;
-      hr = cpu->Run();
-    } else {
-      hr = cpu->Step();
+    try {
+      if (ticks) {
+        env.ticks_remaining = *ticks;
+        hr = cpu->Run();
+      } else {
+        hr = cpu->Step();
+      }
+    } catch (const std::exception &e) {
+      std::fprintf(stderr,
+                   "\n!!! touchHLE: unhandled C++ exception inside dynarmic\n"
+                   "    type: %s\n"
+                   "    what: %s\n",
+                   typeid(e).name(), e.what());
+      std::fflush(stderr);
+      std::abort();
+    } catch (...) {
+      std::fprintf(stderr,
+                   "\n!!! touchHLE: unhandled non-std C++ exception inside "
+                   "dynarmic (catch (...))\n");
+      std::fflush(stderr);
+      std::abort();
     }
     std::int32_t res;
     if ((!hr && ticks) || (hr == Dynarmic::HaltReason::Step && !ticks)) {

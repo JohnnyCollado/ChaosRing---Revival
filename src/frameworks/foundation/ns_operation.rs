@@ -410,9 +410,6 @@ pub const CLASSES: ClassExports = objc_classes! {
     pthread_attr_setdetachstate(env, attr, PTHREAD_CREATE_DETACHED);
     let thread_ptr: MutPtr<pthread_t> = env.mem.alloc(guest_size_of::<pthread_t>()).cast();
     pthread_create(env, thread_ptr, attr.cast_const(), gf, op.cast());
-    // (NSThread's `+isMultiThreaded` query will be set to true by
-    // pthread_create's internal accounting; we don't need to touch the
-    // private ns_thread state.)
 }
 
 - (())addOperations:(id)ops waitUntilFinished:(bool)_wait {

@@ -30,6 +30,22 @@ const NSFileSystemFreeSize: &str = "NSFileSystemFreeSize";
 pub const NSFileType: &str = "NSFileType";
 pub const NSFileTypeDirectory: &str = "NSFileTypeDirectory";
 pub const NSFileTypeRegular: &str = "NSFileTypeRegular";
+pub const NSFileTypeSymbolicLink: &str = "NSFileTypeSymbolicLink";
+pub const NSFileTypeSocket: &str = "NSFileTypeSocket";
+pub const NSFileTypeUnknown: &str = "NSFileTypeUnknown";
+pub const NSFileCreationDate: &str = "NSFileCreationDate";
+pub const NSFileSystemFileNumber: &str = "NSFileSystemFileNumber";
+pub const NSFileSystemNumber: &str = "NSFileSystemNumber";
+pub const NSFilePosixPermissions: &str = "NSFilePosixPermissions";
+pub const NSFileOwnerAccountID: &str = "NSFileOwnerAccountID";
+pub const NSFileGroupOwnerAccountID: &str = "NSFileGroupOwnerAccountID";
+pub const NSFileReferenceCount: &str = "NSFileReferenceCount";
+pub const NSFileExtensionHidden: &str = "NSFileExtensionHidden";
+pub const NSFileImmutable: &str = "NSFileImmutable";
+pub const NSFileAppendOnly: &str = "NSFileAppendOnly";
+pub const NSFileBusy: &str = "NSFileBusy";
+pub const NSFileHFSCreatorCode: &str = "NSFileHFSCreatorCode";
+pub const NSFileHFSTypeCode: &str = "NSFileHFSTypeCode";
 
 pub const CONSTANTS: ConstantExports = &[
     (
@@ -49,6 +65,67 @@ pub const CONSTANTS: ConstantExports = &[
     (
         "_NSFileTypeRegular",
         HostConstant::NSString(NSFileTypeRegular),
+    ),
+    (
+        "_NSFileTypeSymbolicLink",
+        HostConstant::NSString(NSFileTypeSymbolicLink),
+    ),
+    (
+        "_NSFileTypeSocket",
+        HostConstant::NSString(NSFileTypeSocket),
+    ),
+    (
+        "_NSFileTypeUnknown",
+        HostConstant::NSString(NSFileTypeUnknown),
+    ),
+    (
+        "_NSFileCreationDate",
+        HostConstant::NSString(NSFileCreationDate),
+    ),
+    (
+        "_NSFileSystemFileNumber",
+        HostConstant::NSString(NSFileSystemFileNumber),
+    ),
+    (
+        "_NSFileSystemNumber",
+        HostConstant::NSString(NSFileSystemNumber),
+    ),
+    (
+        "_NSFilePosixPermissions",
+        HostConstant::NSString(NSFilePosixPermissions),
+    ),
+    (
+        "_NSFileOwnerAccountID",
+        HostConstant::NSString(NSFileOwnerAccountID),
+    ),
+    (
+        "_NSFileGroupOwnerAccountID",
+        HostConstant::NSString(NSFileGroupOwnerAccountID),
+    ),
+    (
+        "_NSFileReferenceCount",
+        HostConstant::NSString(NSFileReferenceCount),
+    ),
+    (
+        "_NSFileExtensionHidden",
+        HostConstant::NSString(NSFileExtensionHidden),
+    ),
+    (
+        "_NSFileImmutable",
+        HostConstant::NSString(NSFileImmutable),
+    ),
+    (
+        "_NSFileAppendOnly",
+        HostConstant::NSString(NSFileAppendOnly),
+    ),
+    ("_NSFileBusy", HostConstant::NSString(NSFileBusy)),
+    (
+        "_NSFileHFSCreatorCode",
+        HostConstant::NSString(NSFileHFSCreatorCode),
+    ),
+    (
+        "_NSFileHFSTypeCode",
+        HostConstant::NSString(NSFileHFSTypeCode),
     ),
 ];
 
@@ -395,11 +472,8 @@ pub const CLASSES: ClassExports = objc_classes! {
                        error:(MutPtr<id>)error { // NSError **
     assert!(error.is_null()); // TODO
 
-    // TODO: other attributes
-    log_once!("Warning: NSFileManager attributesOfItemAtPath:error: returns only NSFileType, NSFileModificationDate and NSFileSize attributes!");
-
     let path = ns_string::to_rust_string(env, path); // TODO: avoid copy
-    // TODO: traverse link
+    // TODO: traverse symlink (touchHLE's filesystem doesn't model them yet).
     log_dbg!("[(NSFileManager *){:?} attributesOfItemAtPath:{} error:{:?}]", this, path, error);
     let guest_path = GuestPath::new(&path);
 
@@ -443,44 +517,130 @@ pub const CLASSES: ClassExports = objc_classes! {
 };
 
 /// Helper function for `fileAttributesAtPath:traverseLink:` and
-/// `attributesOfItemAtPath:error:`
+/// `attributesOfItemAtPath:error:`.
+///
+/// Returns a dictionary populated with **every** common iOS attribute key,
+/// using sensible defaults where we don't track the real value. Guest code
+/// commonly does `[[dict objectForKey:NSFilePosixPermissions] intValue]`,
+/// and getting nil back here can propagate as 0, undefined behaviour, or
+/// the C++-exception-into-Rust cascade we hit while loading saves.
 fn file_attributes_common(env: &mut Environment, guest_path: &GuestPath) -> id {
     if !env.fs.exists(guest_path) {
-        log!(
+        log_dbg!(
             "file_attributes_common() called with file that does not exist: {:?}, Returning nil",
             guest_path
         );
         return nil;
     }
 
-    // TODO: support more attributes
+    let is_dir = env.fs.is_dir(guest_path);
     let unix_timestamp: f64 = env.fs.modified(guest_path).unwrap() as f64;
+    let size: u64 = if is_dir {
+        0
+    } else {
+        env.fs.size(guest_path).unwrap_or(0)
+    };
+
+    // Build a stable, non-zero pseudo-inode from the path. The exact value
+    // doesn't matter; what matters is that it's distinct between distinct
+    // paths and stable across queries for the same path within a session.
+    let inode_pseudo: u64 = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        guest_path.as_str().hash(&mut h);
+        // OR a non-zero bit so we never produce 0 (which guest code might
+        // treat as "no inode").
+        h.finish() | 1
+    };
+
     let unix_ref_date: id = msg_class![env; NSDate dateWithTimeIntervalSince1970:0f64];
     let unix_date: id =
         msg_class![env; NSDate dateWithTimeInterval:unix_timestamp sinceDate:unix_ref_date];
 
-    let size = env.fs.size(guest_path).unwrap();
     let size_num: id = msg_class![env; NSNumber numberWithUnsignedLongLong:size];
+    let inode_num: id = msg_class![env; NSNumber numberWithUnsignedLongLong:inode_pseudo];
+    let fs_number_num: id = {
+        let one: u32 = 1;
+        msg_class![env; NSNumber numberWithUnsignedInt:one]
+    };
+    let perms_num: id = {
+        let perms: u32 = if is_dir { 0o755 } else { 0o644 };
+        msg_class![env; NSNumber numberWithUnsignedInt:perms]
+    };
+    let uid_num: id = {
+        let uid: u32 = 501;
+        msg_class![env; NSNumber numberWithUnsignedInt:uid]
+    };
+    let gid_num: id = {
+        let gid: u32 = 501;
+        msg_class![env; NSNumber numberWithUnsignedInt:gid]
+    };
+    let refcount_num: id = {
+        let n: u32 = 1;
+        msg_class![env; NSNumber numberWithUnsignedInt:n]
+    };
+    let zero_u32_num: id = {
+        let n: u32 = 0;
+        msg_class![env; NSNumber numberWithUnsignedInt:n]
+    };
+    let false_num: id = msg_class![env; NSNumber numberWithBool:false];
 
     let dict = msg_class![env; NSMutableDictionary new];
 
-    let modif_date_key = get_static_str(env, NSFileModificationDate);
-    () = msg![env; dict setObject:unix_date forKey:modif_date_key];
+    // Type
+    let file_type_key = get_static_str(env, NSFileType);
+    let file_type_value = if is_dir {
+        get_static_str(env, NSFileTypeDirectory)
+    } else if env.fs.is_file(guest_path) {
+        get_static_str(env, NSFileTypeRegular)
+    } else {
+        get_static_str(env, NSFileTypeUnknown)
+    };
+    () = msg![env; dict setObject:file_type_value forKey:file_type_key];
 
+    // Size + dates
     let size_key = get_static_str(env, NSFileSize);
     () = msg![env; dict setObject:size_num forKey:size_key];
+    let modif_date_key = get_static_str(env, NSFileModificationDate);
+    () = msg![env; dict setObject:unix_date forKey:modif_date_key];
+    // We don't track creation time separately; use modification time.
+    let creation_date_key = get_static_str(env, NSFileCreationDate);
+    () = msg![env; dict setObject:unix_date forKey:creation_date_key];
 
-    let file_type_key = get_static_str(env, NSFileType);
-    // TODO: other types
-    if env.fs.is_file(guest_path) {
-        let file_type_regular = get_static_str(env, NSFileTypeRegular);
-        () = msg![env; dict setObject:file_type_regular forKey:file_type_key];
-    } else if env.fs.is_dir(guest_path) {
-        let file_type_directory = get_static_str(env, NSFileTypeDirectory);
-        () = msg![env; dict setObject:file_type_directory forKey:file_type_key];
-    }
+    // Identity / linkage
+    let inode_key = get_static_str(env, NSFileSystemFileNumber);
+    () = msg![env; dict setObject:inode_num forKey:inode_key];
+    let fs_num_key = get_static_str(env, NSFileSystemNumber);
+    () = msg![env; dict setObject:fs_number_num forKey:fs_num_key];
+    let refcount_key = get_static_str(env, NSFileReferenceCount);
+    () = msg![env; dict setObject:refcount_num forKey:refcount_key];
 
-    let dict_imm = msg![env; dict copy];
+    // POSIX-ish
+    let perms_key = get_static_str(env, NSFilePosixPermissions);
+    () = msg![env; dict setObject:perms_num forKey:perms_key];
+    let uid_key = get_static_str(env, NSFileOwnerAccountID);
+    () = msg![env; dict setObject:uid_num forKey:uid_key];
+    let gid_key = get_static_str(env, NSFileGroupOwnerAccountID);
+    () = msg![env; dict setObject:gid_num forKey:gid_key];
+
+    // Flags (all false / zero by default)
+    let ext_hidden_key = get_static_str(env, NSFileExtensionHidden);
+    () = msg![env; dict setObject:false_num forKey:ext_hidden_key];
+    let immutable_key = get_static_str(env, NSFileImmutable);
+    () = msg![env; dict setObject:false_num forKey:immutable_key];
+    let appendonly_key = get_static_str(env, NSFileAppendOnly);
+    () = msg![env; dict setObject:false_num forKey:appendonly_key];
+    let busy_key = get_static_str(env, NSFileBusy);
+    () = msg![env; dict setObject:false_num forKey:busy_key];
+
+    // HFS legacy
+    let hfs_creator_key = get_static_str(env, NSFileHFSCreatorCode);
+    () = msg![env; dict setObject:zero_u32_num forKey:hfs_creator_key];
+    let hfs_type_key = get_static_str(env, NSFileHFSTypeCode);
+    () = msg![env; dict setObject:zero_u32_num forKey:hfs_type_key];
+
+    let dict_imm: id = msg![env; dict copy];
     release(env, dict);
     autorelease(env, dict_imm)
 }

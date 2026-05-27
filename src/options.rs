@@ -48,6 +48,12 @@ pub struct Options {
     pub dpad_to_touch: Option<(f32, f32, f32, f32)>,
     pub stick_to_touch: Option<(f32, f32, f32, f32)>,
     pub stabilize_virtual_cursor: Option<(f32, f32)>,
+    /// Treat the right analog stick as mouse VELOCITY rather than absolute
+    /// position. With this on the cursor stays where you left it when you
+    /// release the stick (like a real mouse), instead of snapping back to
+    /// center and vanishing. Optional value is pixels-per-second at full
+    /// stick deflection (default 800).
+    pub mouse_style_cursor: Option<f32>,
     pub gles1_implementation: Option<GLESImplementation>,
     pub direct_memory_access: bool,
     pub gdb_listen_addrs: Option<Vec<SocketAddr>>,
@@ -81,6 +87,7 @@ impl Default for Options {
             dpad_to_touch: None,
             stick_to_touch: None,
             stabilize_virtual_cursor: None,
+            mouse_style_cursor: None,
             gles1_implementation: None,
             direct_memory_access: true,
             gdb_listen_addrs: None,
@@ -208,6 +215,19 @@ impl Options {
                     "Invalid sticky radius for --stabilize-virtual-cursor=".to_string()
                 })?;
             self.stabilize_virtual_cursor = Some((smoothing_strength, sticky_radius));
+        } else if arg == "--mouse-style-cursor" {
+            // Bare flag form -> default speed.
+            self.mouse_style_cursor = Some(800.0);
+        } else if let Some(value) = arg.strip_prefix("--mouse-style-cursor=") {
+            let speed: f32 = value
+                .parse()
+                .ok()
+                .and_then(|s| if s > 0.0 { Some(s) } else { None })
+                .ok_or_else(|| {
+                    "Invalid speed for --mouse-style-cursor= (expected positive pixels/sec)"
+                        .to_string()
+                })?;
+            self.mouse_style_cursor = Some(speed);
         } else if let Some(value) = arg.strip_prefix("--gles1=") {
             self.gles1_implementation = Some(
                 GLESImplementation::from_short_name(value)

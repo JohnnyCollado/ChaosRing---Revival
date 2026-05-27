@@ -225,3 +225,32 @@ com.StarByte.NEX: --landscape-left --force-composition
 # Galaxy on Fire
 # In Game controls A = Weapon Select, X = Boost, B = Fire, Y = Missle, Start = Pause
 www.fishlabs.net.GalaxyOnFire: --landscape-right --button-to-touch=A,427,274 --button-to-touch=X,380,254 --button-to-touch=Y,124,291 --button-to-touch=B,444,221 --button-to-touch=Start,444,20
+
+# Chaos Rings (iPhone, 2.2.0). Movement uses a FLOATING virtual joystick
+# anchored at the lower-left of the screen (see in-game tutorial:
+# "The cursor will appear wherever you touch the screen, and the location
+# you touch will act as the base for further [movement]"). The visible
+# joystick puck sits at roughly (80, 240) in the 480x320 landscape coord
+# system. Mapping:
+#
+#   - Left stick -> stick_to_touch rectangle CENTERED on the puck so the
+#     touch always lands on the on-screen joystick. The rectangle is
+#     100x100 around (80, 240) so full stick deflection drags the touch
+#     ~50px from anchor — enough for the game to register max-speed
+#     movement in any direction.
+#   - D-pad -> discrete taps inside the joystick zone, offset from the
+#     anchor in the corresponding direction. Useful if the stick isn't
+#     handy / for digital movement.
+#   - A -> tap screen center (advance dialog).
+#   - B -> tap top-right corner (the dialog fast-forward arrow visible
+#     in the screenshot — same spot the in-game UI puts it).
+#   - Start -> tap top-left (likely pause / system menu area).
+#   - Right stick = mouse-style cursor (parks on release), RB = click,
+#     for tapping enemies / menu items in battle.
+com.square-enix.ChaosRings: --mouse-style-cursor=800 --stick-to-touch=30,190,100,100 --button-to-touch=DPadUp,80,200 --button-to-touch=DPadDown,80,280 --button-to-touch=DPadLeft,40,240 --button-to-touch=DPadRight,120,240 --button-to-touch=A,240,160 --button-to-touch=B,440,30 --button-to-touch=Start,30,30
+
+# Chaos Rings HD (iPad, 2.3.0). Same floating-joystick scheme scaled to
+# 1024x768. Joystick puck is in the lower-left at ~(170, 575); rectangle
+# is 200x200 around it so full deflection drags ~100px (matches the iPad
+# version's bigger puck reach).
+com.square-enix.ChaosRingsHD: --mouse-style-cursor=1400 --stick-to-touch=70,475,200,200 --button-to-touch=DPadUp,170,500 --button-to-touch=DPadDown,170,650 --button-to-touch=DPadLeft,90,575 --button-to-touch=DPadRight,250,575 --button-to-touch=A,512,384 --button-to-touch=B,950,60 --button-to-touch=Start,60,60

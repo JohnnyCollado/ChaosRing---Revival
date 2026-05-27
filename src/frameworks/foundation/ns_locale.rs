@@ -156,14 +156,36 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)initWithLocaleIdentifier:(id)string { // NSString *
     let str = ns_string::to_rust_string(env, string);
     log_dbg!("[(NSLocale *){:?} initWithLocaleIdentifier:'{}']", this, str);
-    retain(env, string);
-    // Loosely assume 2-char lang code here
-    // TODO: locale identifier parsing
-    assert_eq!(2, str.len());
-    assert!(str.to_lowercase().eq(&str));
-    assert!(!str.contains('_') && !str.contains('-'));
+    // Real iOS accepts identifiers of the form
+    //   <lang>[_<region>][_<variant>][@<keywords>]
+    // e.g. "en", "en_US", "ja_JP", "zh_Hans_CN", "en_US@calendar=japanese".
+    // touchHLE used to hard-assert a 2-char lowercase string here, which
+    // panics on anything more interesting. Just extract the language code
+    // (the prefix up to the first separator), normalise to lowercase, and
+    // store the original identifier as the locale identifier value.
+    let separator_pos = str
+        .find(|c: char| c == '_' || c == '-' || c == '@')
+        .unwrap_or(str.len());
+    let language_code_str = str[..separator_pos].to_lowercase();
+    // ISO 639 language codes are 2 or 3 characters; warn rather than
+    // panic if we see something unexpected.
+    if !(2..=3).contains(&language_code_str.len()) {
+        log!(
+            "Warning: [(NSLocale *){:?} initWithLocaleIdentifier:{:?}] yields language code {:?} of unexpected length",
+            this,
+            str,
+            language_code_str
+        );
+    }
+    let language_code_ns: id = if language_code_str == str {
+        // No normalisation needed — just retain the original string.
+        retain(env, string);
+        string
+    } else {
+        ns_string::from_rust_string(env, language_code_str)
+    };
     assert!(env.objc.borrow::<NSLocaleHostObject>(this).language_code == nil);
-    env.objc.borrow_mut::<NSLocaleHostObject>(this).language_code = string;
+    env.objc.borrow_mut::<NSLocaleHostObject>(this).language_code = language_code_ns;
     this
 }
 

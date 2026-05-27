@@ -134,14 +134,31 @@ pub const CLASSES: ClassExports = objc_classes! {
     assert!(enabled);
 }
 - (f32)batteryLevel {
-    let pct = get_battery_status().0;
-    if pct < 0 {
-        log_dbg!("batteryLevel percentage could not be determined, returning 100% for compatibility");
-        return 1.0
+    // On Android we cannot safely call SDL_GetPowerInfo here: on some
+    // devices (observed: OnePlus 12, Android 16, OneUI variant) the
+    // SDL2 implementation calls JNI NewStringUTF while a Java
+    // StackOverflowError is pending, which makes ART's CheckJNI abort
+    // the whole process with `JNI DETECTED ERROR IN APPLICATION`. The
+    // game (Chaos Rings) polls batteryLevel from its render thread, so
+    // every frame would crash. Return a benign constant instead.
+    #[cfg(target_os = "android")]
+    return 1.0;
+    #[cfg(not(target_os = "android"))]
+    {
+        let pct = get_battery_status().0;
+        if pct < 0 {
+            log_dbg!("batteryLevel percentage could not be determined, returning 100% for compatibility");
+            return 1.0
+        }
+        pct as f32 / 100.0 // narrow down to 0.0 - 1.0
     }
-    pct as f32 / 100.0 // narrow down to 0.0 - 1.0
 }
 - (UIDeviceBatteryState)batteryState {
+    // See batteryLevel above — SDL_GetPowerInfo_Android can abort the
+    // process via CheckJNI, so report "Full" on Android without asking SDL.
+    #[cfg(target_os = "android")]
+    return UIDeviceBatteryStateFull;
+    #[cfg(not(target_os = "android"))]
     match get_battery_status().1 {
         BatteryState::Unknown => UIDeviceBatteryStateUnknown,
         BatteryState::OnBattery => UIDeviceBatteryStateUnplugged,

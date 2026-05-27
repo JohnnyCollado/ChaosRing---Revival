@@ -55,7 +55,11 @@ class DocumentsProvider : DocumentsProvider() {
     }
 
     private fun getBaseDirectory() : File {
-        return context!!.getExternalFilesDir(null)!!
+        // Must match DATA_DIR in MainActivity.java — this is the same folder
+        // the native side writes to via paths::user_data_base_path().
+        val dir = File("/sdcard/ChaosRing")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
     }
 
     override fun onCreate() : Boolean {

@@ -114,25 +114,11 @@ pub const SANDBOX_DIR: &str = "touchHLE_sandbox";
 /// user-modifiable files. This is empty on platforms other than Android.
 pub fn user_data_base_path() -> Cow<'static, Path> {
     #[cfg(target_os = "android")]
-    unsafe {
-        // This is an exception to the rule that SDL2 should only be used
-        // directly from src/window.rs. This is just too distant from windowing
-        // to belong there.
-
-        // Android storage has evolved in a quite messy fashion. Both "internal
-        // storage" and "external storage" (aka the "SD card") are likely to be
-        // internal on a modern device, as absurd as that might sound. SDL2 has
-        // APIs to get paths for both. We use the "external storage" because
-        // it's more likely to be user-accessible.
-        extern "C" {
-            fn SDL_AndroidGetExternalStoragePath() -> *const std::ffi::c_char;
-        }
-        let path = SDL_AndroidGetExternalStoragePath();
-        if path.is_null() {
-            log!("Couldn't get Android external storage path!");
-            panic!();
-        }
-        Cow::from(Path::new(std::ffi::CStr::from_ptr(path).to_str().unwrap()))
+    {
+        // The Java wrapper (MainActivity) is responsible for ensuring this
+        // directory exists and that the app has been granted MANAGE_EXTERNAL_
+        // STORAGE before the native side starts.
+        Cow::from(Path::new("/sdcard/ChaosRing"))
     }
     #[cfg(not(target_os = "android"))]
     {

@@ -30,14 +30,28 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::libc::pthread::cond::pthread_cond_t;
 use crate::libc::stdio::FILE;
 use crate::window::DeviceFamily;
+use crate::coroutine_stack::PreCommittedStack;
 use corosensei::{Coroutine, Yielder};
+
+/// Stack size for each guest thread's host-side coroutine.
+///
+/// Important: we use [`PreCommittedStack`] instead of corosensei's
+/// `DefaultStack` on Windows. Corosensei's default only `MEM_COMMIT`s the
+/// top 4 KB of the reservation and grows on demand via guard-page faults
+/// and `_chkstk`. That doesn't work for **SEH unwinding** when a C++
+/// exception is thrown from native code on the coroutine: the unwinder
+/// runs past the committed region while it's already trying to handle a
+/// fault, leading to a hard access violation in
+/// `_C_specific_handler_noexcept`. Our pre-committed stack commits the
+/// entire size upfront, so SEH machinery has guaranteed pages to walk.
+const COROUTINE_STACK_SIZE: usize = 8 * 1024 * 1024;
 pub use mutex::{MutexId, MutexType, PTHREAD_MUTEX_DEFAULT};
 use nullable_box::NullableBox;
 
 /// Index into the [Vec] of threads. Thread 0 is always the main thread.
 pub type ThreadId = usize;
 
-pub type HostContext = Coroutine<Environment, Environment, Environment>;
+pub type HostContext = Coroutine<Environment, Environment, Environment, PreCommittedStack>;
 
 /// Bookkeeping for a thread.
 pub struct Thread {
@@ -451,7 +465,10 @@ impl Environment {
             false => None,
         });
 
-        let main_thread_init_routine = Coroutine::new(move |yielder, mut env: Environment| {
+        let main_thread_init_routine = Coroutine::with_stack(
+            PreCommittedStack::new(COROUTINE_STACK_SIZE)
+                .expect("failed to allocate main-thread coroutine stack"),
+            move |yielder, mut env: Environment| {
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 env.with_yielder(yielder, move |env| {
                     echo!("CPU emulation begins now.");
@@ -534,7 +551,8 @@ impl Environment {
                 std::panic::resume_unwind(e);
             }
             env
-        });
+            },
+        );
         let main_thread = Thread {
             active: true,
             blocked_by: ThreadBlock::NotBlocked,
@@ -956,32 +974,36 @@ impl Environment {
         let stack_high_addr = stack_alloc.to_bits() + stack_size;
         assert!(stack_high_addr.is_multiple_of(4));
 
-        let thread_routine = Coroutine::new(move |yielder, mut env: Environment| {
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                env.with_yielder(yielder, move |env| {
-                    let regs = env.cpu.regs_mut();
-                    regs[cpu::Cpu::LR] = env.dyld.thread_exit_routine().addr_with_thumb_bit();
-                    regs[cpu::Cpu::SP] = stack_high_addr;
-                    regs[0] = user_data.to_bits();
+        let thread_routine = Coroutine::with_stack(
+            PreCommittedStack::new(COROUTINE_STACK_SIZE)
+                .expect("failed to allocate worker-thread coroutine stack"),
+            move |yielder, mut env: Environment| {
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    env.with_yielder(yielder, move |env| {
+                        let regs = env.cpu.regs_mut();
+                        regs[cpu::Cpu::LR] = env.dyld.thread_exit_routine().addr_with_thumb_bit();
+                        regs[cpu::Cpu::SP] = stack_high_addr;
+                        regs[0] = user_data.to_bits();
 
-                    env.cpu.set_cpsr(
-                        cpu::Cpu::CPSR_USER_MODE
-                            | ((start_routine.is_thumb() as u32) * cpu::Cpu::CPSR_THUMB),
-                    );
-                    let return_value: mem::MutVoidPtr =
-                        start_routine.call_from_host(env, (user_data,));
-                    let curr_thread = &mut env.threads[env.current_thread];
-                    curr_thread.return_value = Some(return_value);
-                    curr_thread.active = false;
-                });
-            }));
-            if let Err(e) = res {
-                let panic_cell = env.panic_cell.clone();
-                panic_cell.set(Some(env));
-                std::panic::resume_unwind(e);
-            }
-            env
-        });
+                        env.cpu.set_cpsr(
+                            cpu::Cpu::CPSR_USER_MODE
+                                | ((start_routine.is_thumb() as u32) * cpu::Cpu::CPSR_THUMB),
+                        );
+                        let return_value: mem::MutVoidPtr =
+                            start_routine.call_from_host(env, (user_data,));
+                        let curr_thread = &mut env.threads[env.current_thread];
+                        curr_thread.return_value = Some(return_value);
+                        curr_thread.active = false;
+                    });
+                }));
+                if let Err(e) = res {
+                    let panic_cell = env.panic_cell.clone();
+                    panic_cell.set(Some(env));
+                    std::panic::resume_unwind(e);
+                }
+                env
+            },
+        );
 
         self.threads.push(Thread {
             active: true,
@@ -1151,22 +1173,26 @@ impl Environment {
         R: 'static,
     {
         let panic_cell = Rc::new(Cell::new(None));
-        let mut app_picker_coroutine = Coroutine::new(move |yielder, mut env: Environment| {
-            env.panic_cell = panic_cell.clone();
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                env.with_yielder(yielder, f)
-            }));
-            match res {
-                // We want the environment to be dropped outside of the
-                // coroutine, so send it back when we return.
-                Ok(r) => (r, env),
-                Err(e) => {
-                    let panic_cell = env.panic_cell.clone();
-                    panic_cell.set(Some(env));
-                    std::panic::resume_unwind(e);
+        let mut app_picker_coroutine = Coroutine::with_stack(
+            PreCommittedStack::new(COROUTINE_STACK_SIZE)
+                .expect("failed to allocate app-picker coroutine stack"),
+            move |yielder, mut env: Environment| {
+                env.panic_cell = panic_cell.clone();
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    env.with_yielder(yielder, f)
+                }));
+                match res {
+                    // We want the environment to be dropped outside of the
+                    // coroutine, so send it back when we return.
+                    Ok(r) => (r, env),
+                    Err(e) => {
+                        let panic_cell = env.panic_cell.clone();
+                        panic_cell.set(Some(env));
+                        std::panic::resume_unwind(e);
+                    }
                 }
-            }
-        });
+            },
+        );
         loop {
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 app_picker_coroutine.resume(self)

@@ -241,6 +241,17 @@ pub struct Window {
     accelerometer: Option<sdl2::sensor::Sensor>,
     virtual_cursor_last: Option<(f32, f32, bool, bool)>,
     virtual_cursor_last_unsticky: Option<(f32, f32, Instant)>,
+    /// Last frame's wall-clock time, used to integrate stick velocity
+    /// into mouse-style cursor motion. Set on first `update_virtual_cursor`
+    /// call under `--mouse-style-cursor`. Reset when the option is off.
+    mouse_cursor_last_tick: Option<Instant>,
+    /// Wall-clock time of the last meaningful input on the mouse-style
+    /// cursor (stick deflection or click). Used to auto-hide the cursor
+    /// after a few seconds of inactivity, just like a real desktop mouse
+    /// hides while you're typing. The position is retained — when the
+    /// user moves the stick again the cursor re-appears in place rather
+    /// than at the screen center.
+    mouse_cursor_last_input: Option<Instant>,
     virtual_accelerometer_last: Option<(f32, f32, bool)>,
     /// Whether or not we are on the "main" environment stack (rather than
     /// a coroutine stack). Checked in various functions to make sure that
@@ -325,6 +336,7 @@ impl Window {
             let window = video_ctx
                 .window(title, width, height)
                 .position_centered()
+                .resizable()
                 .opengl()
                 .build()
                 .unwrap();
@@ -396,6 +408,8 @@ impl Window {
             accelerometer,
             virtual_cursor_last: None,
             virtual_cursor_last_unsticky: None,
+            mouse_cursor_last_tick: None,
+            mouse_cursor_last_input: None,
             virtual_accelerometer_last: None,
             on_main_stack: true,
         };
@@ -538,6 +552,16 @@ impl Window {
                 } => {
                     let (x, y) = transform_virt_accel_coords(self, (x, y));
                     self.virtual_accelerometer_last = Some((x, y, false));
+                }
+                // F11 toggles borderless fullscreen on desktop. No-op on
+                // Android (rotatable_fullscreen() builds always start
+                // fullscreen and have no key to press anyway).
+                E::KeyDown {
+                    keycode: Some(sdl2::keyboard::Keycode::F11),
+                    repeat: false,
+                    ..
+                } if !Self::rotatable_fullscreen() => {
+                    self.toggle_fullscreen();
                 }
                 _ => {}
             }
@@ -691,19 +715,38 @@ impl Window {
                             ),
                             true,
                         );
+                        // Coordinates of the rectangle's geometric center.
+                        // Games with a floating virtual joystick (e.g. Chaos
+                        // Rings — "the cursor will appear wherever you touch
+                        // the screen, and the location you touch will act as
+                        // the base") use the FIRST touch as the joystick
+                        // anchor. Anchoring every TouchDown / TouchUp at the
+                        // rectangle center keeps the on-screen puck pinned to
+                        // the location specified by --stick-to-touch instead
+                        // of jumping to wherever the player flicked the stick.
+                        let center_coords = transform_input_coords(
+                            self,
+                            (x + w / 2.0, y + h / 2.0),
+                            true,
+                        );
                         if stick_x.abs() < options.deadzone && stick_y.abs() < options.deadzone {
                             if !self.stick_active {
                                 // Ignore deadzone events when stick is inactive
                                 continue;
                             } else {
-                                // Release touch when stick returns to deadzone
+                                // Release touch and reset the touch position
+                                // back to the anchor so the next press starts
+                                // from the same on-screen spot.
                                 self.stick_active = false;
-                                Event::TouchesUp(HashMap::from([(FingerId::StickToTouch, coords)]))
+                                Event::TouchesUp(HashMap::from([(FingerId::StickToTouch, center_coords)]))
                             }
                         } else if !self.stick_active {
-                            // New touch
+                            // New touch — land it at the anchor so the game
+                            // pins the virtual joystick puck there. The drag
+                            // direction takes effect on the next axis event
+                            // (TouchesMove below).
                             self.stick_active = true;
-                            Event::TouchesDown(HashMap::from([(FingerId::StickToTouch, coords)]))
+                            Event::TouchesDown(HashMap::from([(FingerId::StickToTouch, center_coords)]))
                         } else {
                             // Move existing touch
                             Event::TouchesMove(HashMap::from([(FingerId::StickToTouch, coords)]))
@@ -846,9 +889,18 @@ impl Window {
             })
         }
 
+        // Always tick the virtual cursor, even when no controller event
+        // arrived this poll. We need the regular tick so that:
+        //   - --mouse-style-cursor can auto-hide after its idle timeout
+        //     (the visibility check lives inside update_virtual_cursor),
+        //   - the velocity integration keeps moving the cursor while the
+        //     stick is held outside the deadzone but SDL isn't emitting
+        //     new axis events.
+        // Touch events are only pushed when the controller actually did
+        // something, so this doesn't generate spurious taps at rest.
+        let (new_x, new_y, pressed, pressed_changed, moved) =
+            self.update_virtual_cursor(options);
         if controller_updated {
-            let (new_x, new_y, pressed, pressed_changed, moved) =
-                self.update_virtual_cursor(options);
             self.event_queue
                 .push_back(match (pressed, pressed_changed, moved) {
                     (true, true, _) => {
@@ -1022,38 +1074,97 @@ impl Window {
     /// and whether the cursor moved.
     fn update_virtual_cursor(&mut self, options: &Options) -> (f32, f32, bool, bool, bool) {
         // Get right analog stick input. The range is [-1, 1] on each axis.
-        let (x, y, pressed) = self.get_controller_stick(options, false);
+        let (raw_x, raw_y, pressed) = self.get_controller_stick(options, false);
 
-        // The cursor is intended to only show up once you move the analog stick
-        // out of its deadzone, or while the button is held.
-        let visible = pressed || x != 0.0 || y != 0.0;
-
-        // Though the analog stick output fits within a square, its actual range
-        // is usually a circle enclosed by the square. So we need to cut out the
-        // rectangular shape of the screen from that circle within the square.
         let (vx, vy, vw, vh) = self.viewport();
         let (vx, vy, vw, vh) = (vx as f32, vy as f32, vw as f32, vh as f32);
-
-        let (x, y) = {
-            // Use Pythagoras's theorem to find the largest size the rectangle
-            // can have within the circle.
-            let ratio = vw / vh;
-            let rect_height = (ratio * ratio + 1.0).powf(-0.5);
-            let rect_width = ratio * rect_height;
-
-            let x_abs = x.abs().min(rect_width) / rect_width;
-            let y_abs = y.abs().min(rect_height) / rect_height;
-            (x_abs.copysign(x), y_abs.copysign(y))
-        };
-
-        // Convert to on-screen window co-ordinates
-        let x = (x / 2.0 + 0.5) * vw + vx;
-        let y = (y / 2.0 + 0.5) * vh + vy;
 
         let (old_x, old_y, old_pressed, _old_visible) =
             self.virtual_cursor_last.unwrap_or_default();
 
-        let (x, y) = if let Some((smoothing_strength, sticky_radius)) =
+        // Two cursor models:
+        //   - Mouse-style (--mouse-style-cursor): right stick deflection is
+        //     VELOCITY. The cursor accumulates motion and stays put when the
+        //     stick is released, just like a real mouse. Visibility is
+        //     "sticky" — once you've moved the cursor, it stays on screen
+        //     at its last position. This is the right model for menu-driven
+        //     games where you want to park the cursor over a target and
+        //     then press the click button.
+        //   - Default (absolute): stick position == cursor position. Cursor
+        //     hides when the stick is released. Better for games that want
+        //     a transient pointer (e.g. an FPS look stick).
+        let (x, y, visible) = if let Some(speed) = options.mouse_style_cursor {
+            let now = Instant::now();
+            let delta_t = self
+                .mouse_cursor_last_tick
+                .map(|t| now.saturating_duration_since(t).as_secs_f32())
+                .unwrap_or(0.0)
+                .min(0.1); // clamp big stalls so the cursor doesn't teleport
+            self.mouse_cursor_last_tick = Some(now);
+
+            // Seed at viewport center on the very first update so we don't
+            // start at (0, 0) off-screen.
+            let (mut nx, mut ny) = if self.virtual_cursor_last.is_some() {
+                (old_x, old_y)
+            } else {
+                (vx + vw / 2.0, vy + vh / 2.0)
+            };
+
+            // Integrate stick velocity. Square the magnitude on each axis
+            // so small deflections give fine precision (good for menu
+            // targeting) and big deflections give fast travel.
+            let vx_step = raw_x * raw_x.abs() * speed * delta_t;
+            let vy_step = raw_y * raw_y.abs() * speed * delta_t;
+            nx += vx_step;
+            ny += vy_step;
+
+            // Clamp to viewport so the cursor can't run off-screen.
+            nx = nx.clamp(vx, vx + vw);
+            ny = ny.clamp(vy, vy + vh);
+
+            // Cursor visibility: hide after MOUSE_AUTOHIDE_SECS of no
+            // input, re-show instantly on any stick deflection or click.
+            // Position is retained while hidden so the cursor re-appears
+            // exactly where the user parked it.
+            const MOUSE_AUTOHIDE_SECS: f32 = 3.0;
+            if raw_x != 0.0 || raw_y != 0.0 || pressed {
+                self.mouse_cursor_last_input = Some(now);
+            }
+            let visible = self
+                .mouse_cursor_last_input
+                .map(|t| now.saturating_duration_since(t).as_secs_f32() < MOUSE_AUTOHIDE_SECS)
+                .unwrap_or(false);
+            (nx, ny, visible)
+        } else {
+            // Original absolute-position behaviour.
+            let visible = pressed || raw_x != 0.0 || raw_y != 0.0;
+
+            // Though the analog stick output fits within a square, its actual range
+            // is usually a circle enclosed by the square. So we need to cut out the
+            // rectangular shape of the screen from that circle within the square.
+            let (x, y) = {
+                let ratio = vw / vh;
+                let rect_height = (ratio * ratio + 1.0).powf(-0.5);
+                let rect_width = ratio * rect_height;
+
+                let x_abs = raw_x.abs().min(rect_width) / rect_width;
+                let y_abs = raw_y.abs().min(rect_height) / rect_height;
+                (x_abs.copysign(raw_x), y_abs.copysign(raw_y))
+            };
+
+            // Convert to on-screen window co-ordinates
+            let x = (x / 2.0 + 0.5) * vw + vx;
+            let y = (y / 2.0 + 0.5) * vh + vy;
+            (x, y, visible)
+        };
+
+        // Skip the jitter-stabilizer in mouse-style mode: velocity
+        // integration already produces smooth, continuous motion, and the
+        // sticky-radius logic would fight the integration and produce
+        // visible "stepping" as the cursor crosses radius thresholds.
+        let (x, y) = if options.mouse_style_cursor.is_some() {
+            (x, y)
+        } else if let Some((smoothing_strength, sticky_radius)) =
             options.stabilize_virtual_cursor
         {
             let new_time = Instant::now();
@@ -1359,13 +1470,48 @@ impl Window {
     ///
     /// The aspect ratio of this region always reflects the guest app's view of
     /// the world, but the scale and orientation might not.
+    /// Flip between borderless-desktop fullscreen and the previous windowed
+    /// state. Called from the F11 key handler on desktop platforms. No-op
+    /// in the rotatable_fullscreen() (Android) case — the caller already
+    /// guards against that — and a no-op safety-net here too.
+    fn toggle_fullscreen(&mut self) {
+        if Self::rotatable_fullscreen() {
+            return;
+        }
+        use sdl2::video::FullscreenType;
+        let next = if self.fullscreen {
+            FullscreenType::Off
+        } else {
+            FullscreenType::Desktop
+        };
+        match self.window.set_fullscreen(next) {
+            Ok(()) => {
+                self.fullscreen = !self.fullscreen;
+                log!(
+                    "F11: fullscreen {} (window {}x{}, drawable {}x{})",
+                    if self.fullscreen { "ON" } else { "OFF" },
+                    self.window.size().0,
+                    self.window.size().1,
+                    self.window.drawable_size().0,
+                    self.window.drawable_size().1,
+                );
+            }
+            Err(e) => {
+                log!("F11: set_fullscreen failed: {}", e);
+            }
+        }
+    }
+
     pub fn viewport(&self) -> (u32, u32, u32, u32) {
         let (app_width, app_height) =
             size_for_orientation(self.device_family, self.device_orientation, self.scale_hack);
-        if !self.fullscreen && !Self::rotatable_fullscreen() {
-            return (0, 0, app_width, app_height);
-        }
 
+        // Always compute the viewport from the actual drawable size so the
+        // GL render fills (and letterboxes) the current window. Previously
+        // we shortcut to (0, 0, app_width, app_height) in the
+        // non-fullscreen case, which assumed the window stayed exactly the
+        // initial size — that broke as soon as the window was resizable
+        // (the GL viewport stayed in the corner with garbage outside).
         let (screen_width, screen_height) = self.window.drawable_size();
 
         let app_aspect = app_width as f32 / app_height as f32;

@@ -28,6 +28,7 @@
 #[macro_use]
 mod log;
 mod abi;
+mod coroutine_stack;
 mod crash_handler;
 mod audio;
 mod bundle;
@@ -115,8 +116,54 @@ Special options:
         Print basic information about the app bundle without running the app.
 ";
 
+/// If APPS_DIR contains exactly one `.ipa`/`.app` bundle, return its path.
+/// Used on Android so the wrapper APK boots straight into its bundled game
+/// without ever showing (or being able to crash inside) the picker UI.
+#[cfg(target_os = "android")]
+fn single_bundle_in_apps_dir() -> Option<PathBuf> {
+    let dir = paths::user_data_base_path().join(paths::APPS_DIR);
+    let mut found: Option<PathBuf> = None;
+    for entry in std::fs::read_dir(&dir).ok()? {
+        let path = entry.ok()?.path();
+        let ext = path.extension().and_then(|e| e.to_str()).map(str::to_lowercase);
+        if matches!(ext.as_deref(), Some("ipa") | Some("app")) {
+            if found.is_some() {
+                return None; // more than one — fall back to picker
+            }
+            found = Some(path);
+        }
+    }
+    found
+}
+
 pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
     crash_handler::install();
+
+    // Install a panic hook that routes panic info through `echo!` (which
+    // also writes to touchHLE_log.txt) instead of just stderr. Without this,
+    // a Rust panic on the worker / main coroutine ends up only on stderr —
+    // and the console window closes on crash, losing the message. On
+    // Android the existing SDL_main hook covers this path; we replicate it
+    // here so Windows / desktop runs also capture panics in the log file.
+    std::panic::set_hook(Box::new(|info| {
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "(non-string payload)".to_string()
+        };
+        if let Some(location) = info.location() {
+            echo!("Panic at {}: {}", location, payload);
+        } else {
+            echo!("Panic: {}", payload);
+        }
+        // Also capture a Rust backtrace at the panic site (most panics are
+        // single-line; this gives us the call chain that produced them).
+        let bt = std::backtrace::Backtrace::force_capture();
+        echo!("Backtrace:\n{}", bt);
+    }));
+
     echo!(
         "touchHLE {}{}{} — https://touchhle.org/",
         branding(),
@@ -197,12 +244,37 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
                 "No app specified. Use the --help flag to see command-line usage.".to_string(),
             );
         }
-        echo!(
-            "No app specified, opening app picker. Use the --help flag to see command-line usage."
-        );
-        let (bundle_path, mut extra_options) = environment::app_picker::app_picker(options)?;
-        option_args.append(&mut extra_options);
-        bundle_path
+
+        // On Android the wrapper APK ships its own IPA. If exactly one bundle
+        // is present in APPS_DIR, skip the picker and launch it directly so
+        // the user doesn't see (and can't crash) the picker UI. Mirror the
+        // Windows launcher's flag set (--disable-direct-memory-access) so
+        // guest memory reads can't trip Android's PAC/MTE protections.
+        #[cfg(target_os = "android")]
+        if let Some(only) = single_bundle_in_apps_dir() {
+            echo!("Auto-selecting only available bundle: {}", only.display());
+            let flag = "--disable-direct-memory-access".to_string();
+            if options.parse_argument(&flag)? {
+                option_args.push(flag);
+            }
+            only
+        } else {
+            echo!(
+                "No app specified, opening app picker. Use the --help flag to see command-line usage."
+            );
+            let (bundle_path, mut extra_options) = environment::app_picker::app_picker(options)?;
+            option_args.append(&mut extra_options);
+            bundle_path
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            echo!(
+                "No app specified, opening app picker. Use the --help flag to see command-line usage."
+            );
+            let (bundle_path, mut extra_options) = environment::app_picker::app_picker(options)?;
+            option_args.append(&mut extra_options);
+            bundle_path
+        }
     };
 
     // When PowerShell does tab-completion on a directory, for some reason it
