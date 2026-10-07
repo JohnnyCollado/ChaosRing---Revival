@@ -72,8 +72,21 @@ fn mmap(
         let new_offset = posix_io::lseek(env, fd, offset, SEEK_SET);
         assert_eq!(new_offset, offset);
 
-        let read = posix_io::read(env, fd, ptr, len);
-        assert_eq!(read as u32, len);
+        // A mapping may extend past the end of the file: real mmap fills the
+        // remainder with zeros. vm_alloc has already zeroed the whole range,
+        // so just read until the mapping is full or the file runs out.
+        let mut total: GuestUSize = 0;
+        while total < len {
+            let read = posix_io::read(env, fd, (ptr.cast::<u8>() + total).cast(), len - total);
+            assert!(read >= 0, "mmap: read({fd}) failed");
+            if read == 0 {
+                break;
+            }
+            total += read as GuestUSize;
+        }
+        if total < len {
+            log_dbg!("mmap: file ended after {total:#x} of {len:#x} bytes, rest is zero-filled");
+        }
     };
 
     assert!(!env.libc_state.mman.mmap_allocations.contains_key(&ptr));
