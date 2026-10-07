@@ -31,6 +31,7 @@ DUMP.txt
 # Local reverse-engineering / unpacked-IPA scratch space
 
 /re_workspace
+/decompile
 
 # Standalone wrapper output for a different game (Song Summoner). The APK is
 # a build artifact, not source.
