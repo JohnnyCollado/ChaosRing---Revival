@@ -66,6 +66,7 @@
 pub mod gles1_native;
 pub mod gles1_on_gl2;
 mod gles_generic;
+mod matrix_palette;
 pub mod present;
 mod util;
 
