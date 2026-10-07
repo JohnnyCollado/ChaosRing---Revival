@@ -164,7 +164,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     // (the prefix up to the first separator), normalise to lowercase, and
     // store the original identifier as the locale identifier value.
     let separator_pos = str
-        .find(|c: char| c == '_' || c == '-' || c == '@')
+        .find(['_', '-', '@'])
         .unwrap_or(str.len());
     let language_code_str = str[..separator_pos].to_lowercase();
     // ISO 639 language codes are 2 or 3 characters; warn rather than

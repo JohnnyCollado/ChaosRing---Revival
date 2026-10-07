@@ -9,7 +9,9 @@ use crate::dyld::ConstantExports;
 use crate::dyld::HostConstant;
 use crate::frameworks::foundation::{ns_string, NSInteger};
 use crate::objc::{id, msg, objc_classes, todo_objc_setter, ClassExports, TrivialHostObject};
-use crate::window::{get_battery_status, BatteryState, DeviceFamily, DeviceOrientation};
+#[cfg(not(target_os = "android"))]
+use crate::window::{get_battery_status, BatteryState};
+use crate::window::{DeviceFamily, DeviceOrientation};
 
 pub const UIDeviceOrientationDidChangeNotification: &str =
     "UIDeviceOrientationDidChangeNotification";
@@ -27,8 +29,12 @@ pub const UIDeviceOrientationFaceUp: UIDeviceOrientation = 5;
 pub const UIDeviceOrientationFaceDown: UIDeviceOrientation = 6;
 
 pub type UIDeviceBatteryState = NSInteger;
+// Android always reports UIDeviceBatteryStateFull, see batteryState.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub const UIDeviceBatteryStateUnknown: UIDeviceBatteryState = 0;
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub const UIDeviceBatteryStateUnplugged: UIDeviceBatteryState = 1;
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub const UIDeviceBatteryStateCharging: UIDeviceBatteryState = 2;
 pub const UIDeviceBatteryStateFull: UIDeviceBatteryState = 3;
 

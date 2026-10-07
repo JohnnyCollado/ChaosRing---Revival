@@ -110,10 +110,7 @@ pub const CONSTANTS: ConstantExports = &[
         "_NSFileExtensionHidden",
         HostConstant::NSString(NSFileExtensionHidden),
     ),
-    (
-        "_NSFileImmutable",
-        HostConstant::NSString(NSFileImmutable),
-    ),
+    ("_NSFileImmutable", HostConstant::NSString(NSFileImmutable)),
     (
         "_NSFileAppendOnly",
         HostConstant::NSString(NSFileAppendOnly),

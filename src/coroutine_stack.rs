@@ -34,8 +34,7 @@ mod windows_impl {
     use corosensei::stack::{Stack, StackPointer, StackTebFields};
     use std::io;
     use windows_sys::Win32::System::Memory::{
-        VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_GUARD,
-        PAGE_READWRITE,
+        VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_GUARD, PAGE_READWRITE,
     };
     use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
 
@@ -137,11 +136,7 @@ mod windows_impl {
             }
         }
 
-        fn update_teb_fields(
-            &mut self,
-            _stack_limit: usize,
-            _guaranteed_stack_bytes: usize,
-        ) {
+        fn update_teb_fields(&mut self, _stack_limit: usize, _guaranteed_stack_bytes: usize) {
             // We don't grow the stack on demand (everything is pre-
             // committed), so updates from the TEB are not meaningful.
         }

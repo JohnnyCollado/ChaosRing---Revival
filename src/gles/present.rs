@@ -18,10 +18,8 @@ use std::time::{Duration, Instant};
 // The "Pointer" hand is shown while the cursor is just hovering / moving;
 // "Select" (the thumb-down hand) is shown while the click button is held
 // so the user has unambiguous visual feedback for a tap.
-const CURSOR_POINTER_PNG: &[u8] =
-    include_bytes!("../../res/RPG Cursors/Cursor Pointer.png");
-const CURSOR_SELECT_PNG: &[u8] =
-    include_bytes!("../../res/RPG Cursors/Cursor Select.png");
+const CURSOR_POINTER_PNG: &[u8] = include_bytes!("../../res/RPG Cursors/Cursor Pointer.png");
+const CURSOR_SELECT_PNG: &[u8] = include_bytes!("../../res/RPG Cursors/Cursor Select.png");
 
 /// Decoded RGBA pixels + dimensions for a cursor sprite. Decoded once on
 /// first use (cheap PNG, tiny pixel-art file), cached for the lifetime of
@@ -43,8 +41,7 @@ static CURSOR_SELECT_TEX: AtomicU32 = AtomicU32::new(0);
 
 fn cursor_pixels(slot: &'static OnceLock<CursorPixels>, png: &[u8]) -> &'static CursorPixels {
     slot.get_or_init(|| {
-        let img = crate::image::Image::from_bytes(png)
-            .expect("baked-in cursor PNG should decode");
+        let img = crate::image::Image::from_bytes(png).expect("baked-in cursor PNG should decode");
         let (w, h) = img.dimensions();
         CursorPixels {
             pixels: img.pixels().to_vec(),
@@ -188,9 +185,21 @@ pub unsafe fn present_frame(
 
         let tex = cursor_texture(
             gles,
-            if pressed { &CURSOR_SELECT_PIXELS } else { &CURSOR_POINTER_PIXELS },
-            if pressed { &CURSOR_SELECT_TEX } else { &CURSOR_POINTER_TEX },
-            if pressed { CURSOR_SELECT_PNG } else { CURSOR_POINTER_PNG },
+            if pressed {
+                &CURSOR_SELECT_PIXELS
+            } else {
+                &CURSOR_POINTER_PIXELS
+            },
+            if pressed {
+                &CURSOR_SELECT_TEX
+            } else {
+                &CURSOR_POINTER_TEX
+            },
+            if pressed {
+                CURSOR_SELECT_PNG
+            } else {
+                CURSOR_POINTER_PNG
+            },
         );
         gles.BindTexture(gles11::TEXTURE_2D, tex);
         gles.Enable(gles11::TEXTURE_2D);
@@ -216,25 +225,13 @@ pub unsafe fn present_frame(
 
         let mut v = vertices;
         for i in (0..v.len()).step_by(2) {
-            v[i]     = (v[i]     * radius + cx) / (vw as f32 / 2.0) - 1.0;
+            v[i] = (v[i] * radius + cx) / (vw as f32 / 2.0) - 1.0;
             v[i + 1] = 1.0 - (v[i + 1] * radius + cy) / (vh as f32 / 2.0);
         }
         gles.VertexPointer(2, gles11::FLOAT, 0, v.as_ptr() as *const GLvoid);
         // Map the sprite atlas 0..1 onto the quad (full sprite, not flipped).
-        let cursor_tc: [f32; 12] = [
-            0.0, 0.0,
-            0.0, 1.0,
-            1.0, 0.0,
-            1.0, 0.0,
-            0.0, 1.0,
-            1.0, 1.0,
-        ];
-        gles.TexCoordPointer(
-            2,
-            gles11::FLOAT,
-            0,
-            cursor_tc.as_ptr() as *const GLvoid,
-        );
+        let cursor_tc: [f32; 12] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        gles.TexCoordPointer(2, gles11::FLOAT, 0, cursor_tc.as_ptr() as *const GLvoid);
         gles.DrawArrays(gles11::TRIANGLES, 0, 6);
     }
 }

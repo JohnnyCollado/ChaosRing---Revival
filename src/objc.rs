@@ -230,7 +230,11 @@ fn objc_unsafeClaimAutoreleasedReturnValue(_env: &mut Environment, obj: id) -> i
 /// `objc_storeStrong(loc, obj)` is equivalent to:
 ///     id old = *loc; [obj retain]; *loc = obj; [old release];
 fn objc_storeStrong(env: &mut Environment, loc: MutPtr<id>, obj: id) {
-    let old: id = if loc.is_null() { nil } else { env.mem.read(loc) };
+    let old: id = if loc.is_null() {
+        nil
+    } else {
+        env.mem.read(loc)
+    };
     messages::retain(env, obj);
     if !loc.is_null() {
         env.mem.write(loc, obj);
@@ -249,7 +253,7 @@ fn objc_retainBlock(env: &mut Environment, block: id) -> id {
     copied.cast::<objc_object>().cast_mut()
 }
 
-// --- Weak reference family (degraded; no zeroing) -----------------------------
+// --- Weak reference family (degraded; no zeroing) ---------------------------
 
 fn objc_storeWeak(env: &mut Environment, loc: MutPtr<id>, obj: id) -> id {
     if !loc.is_null() {
@@ -272,26 +276,42 @@ fn objc_destroyWeak(env: &mut Environment, loc: MutPtr<id>) {
 }
 
 fn objc_loadWeak(env: &mut Environment, loc: MutPtr<id>) -> id {
-    let obj: id = if loc.is_null() { nil } else { env.mem.read(loc) };
+    let obj: id = if loc.is_null() {
+        nil
+    } else {
+        env.mem.read(loc)
+    };
     messages::autorelease(env, obj);
     obj
 }
 
 fn objc_loadWeakRetained(env: &mut Environment, loc: MutPtr<id>) -> id {
-    let obj: id = if loc.is_null() { nil } else { env.mem.read(loc) };
+    let obj: id = if loc.is_null() {
+        nil
+    } else {
+        env.mem.read(loc)
+    };
     messages::retain(env, obj);
     obj
 }
 
 fn objc_copyWeak(env: &mut Environment, dst: MutPtr<id>, src: MutPtr<id>) {
-    let obj: id = if src.is_null() { nil } else { env.mem.read(src) };
+    let obj: id = if src.is_null() {
+        nil
+    } else {
+        env.mem.read(src)
+    };
     if !dst.is_null() {
         env.mem.write(dst, obj);
     }
 }
 
 fn objc_moveWeak(env: &mut Environment, dst: MutPtr<id>, src: MutPtr<id>) {
-    let obj: id = if src.is_null() { nil } else { env.mem.read(src) };
+    let obj: id = if src.is_null() {
+        nil
+    } else {
+        env.mem.read(src)
+    };
     if !dst.is_null() {
         env.mem.write(dst, obj);
     }
@@ -355,8 +375,7 @@ const DESCRIPTOR_OFFSET_COPY_HELPER: u32 = 8;
 
 /// Read a u32 at `addr` from guest memory.
 fn read_u32(env: &mut Environment, addr: u32) -> u32 {
-    env.mem
-        .read(crate::mem::ConstPtr::<u32>::from_bits(addr))
+    env.mem.read(crate::mem::ConstPtr::<u32>::from_bits(addr))
 }
 
 /// Write a u32 to `addr` in guest memory.
@@ -393,17 +412,22 @@ fn _Block_copy(env: &mut Environment, block: ConstVoidPtr) -> ConstVoidPtr {
     {
         let src = env
             .mem
-            .bytes_at(crate::mem::ConstPtr::<u8>::from_bits(block_addr), block_size)
+            .bytes_at(
+                crate::mem::ConstPtr::<u8>::from_bits(block_addr),
+                block_size,
+            )
             .to_vec();
         env.mem
-            .bytes_at_mut(crate::mem::MutPtr::<u8>::from_bits(new_block_addr), block_size)
+            .bytes_at_mut(
+                crate::mem::MutPtr::<u8>::from_bits(new_block_addr),
+                block_size,
+            )
             .copy_from_slice(&src);
     }
 
     // Update flags: mark as heap-allocated with a refcount of 1, drop the
     // BLOCK_IS_GLOBAL bit (it shouldn't be set, but be defensive).
-    let new_flags =
-        (flags & !block_flags::BLOCK_IS_GLOBAL) | block_flags::BLOCK_NEEDS_FREE | 2;
+    let new_flags = (flags & !block_flags::BLOCK_IS_GLOBAL) | block_flags::BLOCK_NEEDS_FREE | 2;
     write_u32(env, new_block_addr + BLOCK_OFFSET_FLAGS, new_flags);
 
     if flags & block_flags::BLOCK_HAS_COPY_DISPOSE != 0 {

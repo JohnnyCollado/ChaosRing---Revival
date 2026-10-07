@@ -122,19 +122,14 @@ mod windows_impl {
                 let rec_ptr = (*info).ExceptionRecord;
                 if !rec_ptr.is_null() {
                     let rec = &*rec_ptr;
-                    let _ = writeln!(
-                        out,
-                        "Exception code: 0x{:08x}",
-                        rec.ExceptionCode as u32
-                    );
+                    let _ = writeln!(out, "Exception code: 0x{:08x}", rec.ExceptionCode as u32);
                     let _ = writeln!(out, "Fault PC:       {:p}", rec.ExceptionAddress);
                     let _ = writeln!(
                         out,
                         "Fault symbol:   {}",
                         resolve_symbol(rec.ExceptionAddress as u64)
                     );
-                    if rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION
-                        && rec.NumberParameters >= 2
+                    if rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec.NumberParameters >= 2
                     {
                         let kind = rec.ExceptionInformation[0];
                         let target = rec.ExceptionInformation[1] as *const u8;
@@ -168,11 +163,7 @@ mod windows_impl {
                 out.push_str("(EXCEPTION_POINTERS pointer was null)\n");
             }
         }
-        let _ = writeln!(
-            out,
-            "Crashing thread: {:?}",
-            std::thread::current().id()
-        );
+        let _ = writeln!(out, "Crashing thread: {:?}", std::thread::current().id());
         // Backtrace last — Backtrace::force_capture may hang or fault on a
         // corrupted stack. Everything above is gathered first so the report
         // is useful even if the backtrace step never returns.
@@ -214,12 +205,7 @@ mod windows_impl {
             let addr = rsp.wrapping_add(i);
             let val = std::ptr::read_volatile(addr);
             if looks_like_code_address(val) {
-                let _ = writeln!(
-                    out,
-                    "  [RSP+{:#04x}] = {}",
-                    i * 8,
-                    resolve_symbol(val)
-                );
+                let _ = writeln!(out, "  [RSP+{:#04x}] = {}", i * 8, resolve_symbol(val));
             } else {
                 let _ = writeln!(out, "  [RSP+{:#04x}] = 0x{:016x}", i * 8, val);
             }

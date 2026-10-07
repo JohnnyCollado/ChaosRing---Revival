@@ -21,12 +21,10 @@ use crate::Environment;
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::surface::Surface;
-use sdl2_sys::SDL_PowerState;
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::f32::consts::{FRAC_PI_2, PI};
 use std::num::NonZeroU32;
-use std::ptr::null_mut;
 use std::time::{Duration, Instant};
 
 #[allow(non_camel_case_types)]
@@ -166,6 +164,8 @@ pub enum Event {
     TextInput(TextInputEvent),
 }
 
+/// Not available on Android, see `batteryLevel` in UIDevice.
+#[cfg(not(target_os = "android"))]
 pub enum BatteryState {
     Unknown,
     OnBattery,
@@ -724,11 +724,8 @@ impl Window {
                         // rectangle center keeps the on-screen puck pinned to
                         // the location specified by --stick-to-touch instead
                         // of jumping to wherever the player flicked the stick.
-                        let center_coords = transform_input_coords(
-                            self,
-                            (x + w / 2.0, y + h / 2.0),
-                            true,
-                        );
+                        let center_coords =
+                            transform_input_coords(self, (x + w / 2.0, y + h / 2.0), true);
                         if stick_x.abs() < options.deadzone && stick_y.abs() < options.deadzone {
                             if !self.stick_active {
                                 // Ignore deadzone events when stick is inactive
@@ -738,7 +735,10 @@ impl Window {
                                 // back to the anchor so the next press starts
                                 // from the same on-screen spot.
                                 self.stick_active = false;
-                                Event::TouchesUp(HashMap::from([(FingerId::StickToTouch, center_coords)]))
+                                Event::TouchesUp(HashMap::from([(
+                                    FingerId::StickToTouch,
+                                    center_coords,
+                                )]))
                             }
                         } else if !self.stick_active {
                             // New touch — land it at the anchor so the game
@@ -746,7 +746,10 @@ impl Window {
                             // direction takes effect on the next axis event
                             // (TouchesMove below).
                             self.stick_active = true;
-                            Event::TouchesDown(HashMap::from([(FingerId::StickToTouch, center_coords)]))
+                            Event::TouchesDown(HashMap::from([(
+                                FingerId::StickToTouch,
+                                center_coords,
+                            )]))
                         } else {
                             // Move existing touch
                             Event::TouchesMove(HashMap::from([(FingerId::StickToTouch, coords)]))
@@ -898,8 +901,7 @@ impl Window {
         //     new axis events.
         // Touch events are only pushed when the controller actually did
         // something, so this doesn't generate spurious taps at rest.
-        let (new_x, new_y, pressed, pressed_changed, moved) =
-            self.update_virtual_cursor(options);
+        let (new_x, new_y, pressed, pressed_changed, moved) = self.update_virtual_cursor(options);
         if controller_updated {
             self.event_queue
                 .push_back(match (pressed, pressed_changed, moved) {
@@ -1139,9 +1141,10 @@ impl Window {
             // Original absolute-position behaviour.
             let visible = pressed || raw_x != 0.0 || raw_y != 0.0;
 
-            // Though the analog stick output fits within a square, its actual range
-            // is usually a circle enclosed by the square. So we need to cut out the
-            // rectangular shape of the screen from that circle within the square.
+            // Though the analog stick output fits within a square, its actual
+            // range is usually a circle enclosed by the square. So we need to
+            // cut out the rectangular shape of the screen from that circle
+            // within the square.
             let (x, y) = {
                 let ratio = vw / vh;
                 let rect_height = (ratio * ratio + 1.0).powf(-0.5);
@@ -1164,9 +1167,7 @@ impl Window {
         // visible "stepping" as the cursor crosses radius thresholds.
         let (x, y) = if options.mouse_style_cursor.is_some() {
             (x, y)
-        } else if let Some((smoothing_strength, sticky_radius)) =
-            options.stabilize_virtual_cursor
-        {
+        } else if let Some((smoothing_strength, sticky_radius)) = options.stabilize_virtual_cursor {
             let new_time = Instant::now();
 
             let (old_x_unsticky, old_y_unsticky, old_time) = self
@@ -1647,7 +1648,11 @@ pub fn show_error_messagebox(window: Option<&Window>, error_message: &str) {
 /// - pct: i32 - percentage of battery remaining.
 /// - status: [BatteryState] - the current status of the battery
 ///   (unplugged, charging, full, etc.)
+#[cfg(not(target_os = "android"))]
 pub fn get_battery_status() -> (i32, BatteryState) {
+    use sdl2_sys::SDL_PowerState;
+    use std::ptr::null_mut;
+
     let mut pct = 0;
     // Unfortunately, Rust-SDL2 does not expose this function yet.
     // iPhoneOS does not measure the battery in seconds remaining,

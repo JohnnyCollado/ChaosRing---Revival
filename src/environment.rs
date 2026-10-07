@@ -27,10 +27,10 @@ use std::net::TcpListener;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::coroutine_stack::PreCommittedStack;
 use crate::libc::pthread::cond::pthread_cond_t;
 use crate::libc::stdio::FILE;
 use crate::window::DeviceFamily;
-use crate::coroutine_stack::PreCommittedStack;
 use corosensei::{Coroutine, Yielder};
 
 /// Stack size for each guest thread's host-side coroutine.
@@ -469,88 +469,95 @@ impl Environment {
             PreCommittedStack::new(COROUTINE_STACK_SIZE)
                 .expect("failed to allocate main-thread coroutine stack"),
             move |yielder, mut env: Environment| {
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                env.with_yielder(yielder, move |env| {
-                    echo!("CPU emulation begins now.");
-                    // Some apps use the stack inside the static initializer.
-                    // While properly behaving apps should be fine, some app
-                    // will try to poke the top of the stack, so we'll give
-                    // it some room.
-                    env.cpu.regs_mut()[Cpu::SP] = 0xFFFFF000;
-                    // Static initializers for libraries must be run before
-                    // the initializer in the app binary.
-                    for bin_idx in env.get_sorted_bin_indices().unwrap() {
-                        let Some(bin) = env.bins.get(bin_idx) else {
-                            continue;
-                        };
-                        let Some(section) =
-                            bin.get_section(mach_o::SectionType::ModInitFuncPointers)
-                        else {
-                            continue;
-                        };
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    env.with_yielder(yielder, move |env| {
+                        echo!("CPU emulation begins now.");
+                        // Some apps use the stack inside the static
+                        // initializer. While properly behaving apps should be
+                        // fine, some app will try to poke the top of the
+                        // stack, so we'll give it some room.
+                        env.cpu.regs_mut()[Cpu::SP] = 0xFFFFF000;
+                        // Static initializers for libraries must be run before
+                        // the initializer in the app binary.
+                        for bin_idx in env.get_sorted_bin_indices().unwrap() {
+                            let Some(bin) = env.bins.get(bin_idx) else {
+                                continue;
+                            };
+                            let Some(section) =
+                                bin.get_section(mach_o::SectionType::ModInitFuncPointers)
+                            else {
+                                continue;
+                            };
 
-                        log_dbg!("Calling static initializers for {:?}", bin.name);
-                        assert!(section.size % 4 == 0);
-                        let base: mem::ConstPtr<abi::GuestFunction> =
-                            mem::Ptr::from_bits(section.addr);
-                        let count = section.size / 4;
-                        for i in 0..count {
-                            let func = env.mem.read(base + i);
-                            log_dbg!(
-                                "Calling static initializer at {:?} from {:?}",
-                                func,
-                                (base + i)
-                            );
-                            () = func.call_from_host(env, ());
+                            log_dbg!("Calling static initializers for {:?}", bin.name);
+                            assert!(section.size % 4 == 0);
+                            let base: mem::ConstPtr<abi::GuestFunction> =
+                                mem::Ptr::from_bits(section.addr);
+                            let count = section.size / 4;
+                            for i in 0..count {
+                                let func = env.mem.read(base + i);
+                                log_dbg!(
+                                    "Calling static initializer at {:?} from {:?}",
+                                    func,
+                                    (base + i)
+                                );
+                                () = func.call_from_host(env, ());
+                            }
+                            log_dbg!("Static initialization done");
                         }
-                        log_dbg!("Static initialization done");
-                    }
 
-                    {
-                        let bin_path = env.bundle.executable_path();
+                        {
+                            let bin_path = env.bundle.executable_path();
 
-                        let envp_list: Vec<String> = env
-                            .env_vars
-                            .clone()
-                            .iter_mut()
-                            .map(|tuple| {
-                                [
-                                    std::str::from_utf8(tuple.0).unwrap(),
-                                    "=",
-                                    env.mem.cstr_at_utf8(*tuple.1).unwrap(),
-                                ]
-                                .concat()
-                            })
-                            .collect();
-                        let envp_ref_list: Vec<&str> =
-                            envp_list.iter().map(|keyvalue| keyvalue.as_str()).collect();
+                            let envp_list: Vec<String> = env
+                                .env_vars
+                                .clone()
+                                .iter_mut()
+                                .map(|tuple| {
+                                    [
+                                        std::str::from_utf8(tuple.0).unwrap(),
+                                        "=",
+                                        env.mem.cstr_at_utf8(*tuple.1).unwrap(),
+                                    ]
+                                    .concat()
+                                })
+                                .collect();
+                            let envp_ref_list: Vec<&str> =
+                                envp_list.iter().map(|keyvalue| keyvalue.as_str()).collect();
 
-                        let bin_path_apple_key = format!("executable_path={}", bin_path.as_str());
+                            let bin_path_apple_key =
+                                format!("executable_path={}", bin_path.as_str());
 
-                        let argv = Vec::from_iter(
-                            std::iter::once(bin_path.as_str())
-                                .chain(app_args.iter().map(|s| s.as_str())),
-                        );
-                        let envp = envp_ref_list.as_slice();
-                        let apple = &[bin_path_apple_key.as_str()];
-                        stack::prep_stack_for_start(&mut env.mem, &mut env.cpu, &argv, envp, apple);
-                    }
+                            let argv = Vec::from_iter(
+                                std::iter::once(bin_path.as_str())
+                                    .chain(app_args.iter().map(|s| s.as_str())),
+                            );
+                            let envp = envp_ref_list.as_slice();
+                            let apple = &[bin_path_apple_key.as_str()];
+                            stack::prep_stack_for_start(
+                                &mut env.mem,
+                                &mut env.cpu,
+                                &argv,
+                                envp,
+                                apple,
+                            );
+                        }
 
-                    // Manually call here, since running call_from_host pushes
-                    // a stack frame and disrupts abi for _start.
-                    env.cpu
-                        .branch_with_link(entry_point_addr, env.dyld.thread_exit_routine());
-                    env.run_call();
+                        // Manually call here, since running call_from_host
+                        // pushes a stack frame and disrupts abi for _start.
+                        env.cpu
+                            .branch_with_link(entry_point_addr, env.dyld.thread_exit_routine());
+                        env.run_call();
 
-                    panic!("Main function exited unexpectedly!");
-                })
-            }));
-            if let Err(e) = res {
-                let panic_cell = env.panic_cell.clone();
-                panic_cell.set(Some(env));
-                std::panic::resume_unwind(e);
-            }
-            env
+                        panic!("Main function exited unexpectedly!");
+                    })
+                }));
+                if let Err(e) = res {
+                    let panic_cell = env.panic_cell.clone();
+                    panic_cell.set(Some(env));
+                    std::panic::resume_unwind(e);
+                }
+                env
             },
         );
         let main_thread = Thread {

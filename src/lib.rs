@@ -28,11 +28,11 @@
 #[macro_use]
 mod log;
 mod abi;
-mod coroutine_stack;
-mod crash_handler;
 mod audio;
 mod bundle;
+mod coroutine_stack;
 mod cpu;
+mod crash_handler;
 mod debug;
 mod dyld;
 mod environment;
@@ -125,7 +125,10 @@ fn single_bundle_in_apps_dir() -> Option<PathBuf> {
     let mut found: Option<PathBuf> = None;
     for entry in std::fs::read_dir(&dir).ok()? {
         let path = entry.ok()?.path();
-        let ext = path.extension().and_then(|e| e.to_str()).map(str::to_lowercase);
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_lowercase);
         if matches!(ext.as_deref(), Some("ipa") | Some("app")) {
             if found.is_some() {
                 return None; // more than one — fall back to picker

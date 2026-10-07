@@ -222,7 +222,11 @@ pub fn pthread_create(
         },
     );
 
-    log!("[DIAG] pthread_create => thread_id={}, start_routine={:?}", thread_id, start_routine);
+    log!(
+        "[DIAG] pthread_create => thread_id={}, start_routine={:?}",
+        thread_id,
+        start_routine
+    );
 
     0 // success
 }

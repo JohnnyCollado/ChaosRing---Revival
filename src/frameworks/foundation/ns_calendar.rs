@@ -12,9 +12,7 @@
 
 use crate::frameworks::core_foundation::time::CFAbsoluteTimeGetGregorianDate;
 use crate::frameworks::foundation::{NSInteger, NSTimeInterval, NSUInteger};
-use crate::objc::{
-    autorelease, id, msg, msg_class, nil, objc_classes, ClassExports, HostObject, NSZonePtr,
-};
+use crate::objc::{autorelease, id, msg, nil, objc_classes, ClassExports, HostObject, NSZonePtr};
 
 // NSCalendarUnit constants.
 #[allow(dead_code)]
@@ -204,6 +202,7 @@ fn compute_weekday(year: i32, month: i32, day: i32) -> NSInteger {
     let k = y % 100;
     let j = y / 100;
     let h = (day + 13 * (m + 1) / 5 + k + k / 4 + j / 4 + 5 * j) % 7;
-    // h: 0=Saturday, 1=Sunday, ..., 6=Friday. Convert to Cocoa: 1=Sunday..7=Saturday.
+    // h: 0=Saturday, 1=Sunday, ..., 6=Friday.
+    // Convert to Cocoa: 1=Sunday..7=Saturday.
     (((h + 6) % 7) + 1) as NSInteger
 }
