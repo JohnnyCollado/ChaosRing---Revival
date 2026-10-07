@@ -398,6 +398,10 @@ pub struct GLES1OnGL2State {
     pointer_is_fixed_point: [bool; ARRAYS.len()],
     fixed_point_texture_units: HashSet<GLenum>,
     fixed_point_translation_buffers: [Vec<GLfloat>; ARRAYS.len()],
+    /// `glMatrixMode(GL_MATRIX_PALETTE_OES)` is active. Desktop GL has no
+    /// matrix palette, so matrix operations in this mode are discarded rather
+    /// than clobbering the modelview/projection/texture matrix.
+    matrix_palette_mode: bool,
 }
 
 pub struct GLES1OnGL2Context {
@@ -417,6 +421,7 @@ impl GLESContext for GLES1OnGL2Context {
                 pointer_is_fixed_point: [false; ARRAYS.len()],
                 fixed_point_texture_units: HashSet::new(),
                 fixed_point_translation_buffers: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+                matrix_palette_mode: false,
             },
             is_loaded: false,
         })
@@ -1340,6 +1345,30 @@ impl GLES for GLES1OnGL2<'_> {
         }
     }
 
+    // OES_matrix_palette: not available on desktop GL. Accept the calls so
+    // skinned meshes don't crash; they render without skinning (bind pose).
+    unsafe fn CurrentPaletteMatrixOES(&mut self, _matrix_palette_index: GLuint) {
+        log_once!("Warning: glCurrentPaletteMatrixOES ignored, skinned meshes will not animate");
+    }
+    unsafe fn MatrixIndexPointerOES(
+        &mut self,
+        _size: GLint,
+        _type: GLenum,
+        _stride: GLsizei,
+        _pointer: *const GLvoid,
+    ) {
+        log_once!("Warning: glMatrixIndexPointerOES ignored");
+    }
+    unsafe fn WeightPointerOES(
+        &mut self,
+        _size: GLint,
+        _type: GLenum,
+        _stride: GLsizei,
+        _pointer: *const GLvoid,
+    ) {
+        log_once!("Warning: glWeightPointerOES ignored");
+    }
+
     // Drawing
     unsafe fn DrawArrays(&mut self, mode: GLenum, first: GLint, count: GLsizei) {
         assert!([
@@ -1956,23 +1985,43 @@ impl GLES for GLES1OnGL2<'_> {
 
     // Matrix stack operations
     unsafe fn MatrixMode(&mut self, mode: GLenum) {
+        if mode == gles11::MATRIX_PALETTE_OES {
+            self.state.matrix_palette_mode = true;
+            return;
+        }
         assert!(mode == gl21::MODELVIEW || mode == gl21::PROJECTION || mode == gl21::TEXTURE);
+        self.state.matrix_palette_mode = false;
         gl21::MatrixMode(mode);
     }
     unsafe fn LoadIdentity(&mut self) {
+        if self.state.matrix_palette_mode {
+            return;
+        }
         gl21::LoadIdentity();
     }
     unsafe fn LoadMatrixf(&mut self, m: *const GLfloat) {
+        if self.state.matrix_palette_mode {
+            return;
+        }
         gl21::LoadMatrixf(m);
     }
     unsafe fn LoadMatrixx(&mut self, m: *const GLfixed) {
+        if self.state.matrix_palette_mode {
+            return;
+        }
         let matrix = matrix_fixed_to_float(m);
         gl21::LoadMatrixf(matrix.as_ptr());
     }
     unsafe fn MultMatrixf(&mut self, m: *const GLfloat) {
+        if self.state.matrix_palette_mode {
+            return;
+        }
         gl21::MultMatrixf(m);
     }
     unsafe fn MultMatrixx(&mut self, m: *const GLfixed) {
+        if self.state.matrix_palette_mode {
+            return;
+        }
         let matrix = matrix_fixed_to_float(m);
         gl21::MultMatrixf(matrix.as_ptr());
     }

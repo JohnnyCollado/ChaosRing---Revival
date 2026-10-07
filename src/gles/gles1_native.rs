@@ -393,6 +393,36 @@ impl GLES for GLES1Native<'_> {
         gles11::VertexPointer(size, type_, stride, pointer)
     }
 
+    // OES_matrix_palette
+    unsafe fn CurrentPaletteMatrixOES(&mut self, matrix_palette_index: GLuint) {
+        static CHECK_SUPPORT: std::sync::Once = std::sync::Once::new();
+        CHECK_SUPPORT.call_once(|| {
+            let supported = CStr::from_ptr(gles11::GetString(gles11::EXTENSIONS) as _)
+                .to_string_lossy()
+                .contains("GL_OES_matrix_palette");
+            log!("First matrix palette (skinned mesh) draw; host GL_OES_matrix_palette supported: {supported}");
+        });
+        gles11::CurrentPaletteMatrixOES(matrix_palette_index)
+    }
+    unsafe fn MatrixIndexPointerOES(
+        &mut self,
+        size: GLint,
+        type_: GLenum,
+        stride: GLsizei,
+        pointer: *const GLvoid,
+    ) {
+        gles11::MatrixIndexPointerOES(size, type_, stride, pointer)
+    }
+    unsafe fn WeightPointerOES(
+        &mut self,
+        size: GLint,
+        type_: GLenum,
+        stride: GLsizei,
+        pointer: *const GLvoid,
+    ) {
+        gles11::WeightPointerOES(size, type_, stride, pointer)
+    }
+
     // Drawing
     unsafe fn DrawArrays(&mut self, mode: GLenum, first: GLint, count: GLsizei) {
         gles11::DrawArrays(mode, first, count)
